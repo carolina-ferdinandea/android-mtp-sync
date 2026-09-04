@@ -692,6 +692,7 @@ def api_browse_phone():
     if not activation_uri:
         return jsonify({"error": "Device activation URI not found"}), 500
 
+    paths.prime_storage_roots(activation_uri)
     phone_path = _resolve_phone_browser_path(phone_path, activation_uri)
 
     try:
@@ -817,6 +818,7 @@ def api_add_bookmark(bookmark_type):
         activation_uri = ""
         if profile:
             activation_uri = profile.get("device", {}).get("activation_uri", "")
+            paths.prime_storage_roots(activation_uri)
         path = _bookmark_alias_for_phone_path(path, activation_uri)
 
     if any(b["path"] == path for b in bookmarks[bookmark_type]):

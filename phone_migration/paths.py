@@ -57,7 +57,7 @@ def _uri_with_trailing_slash(uri: str) -> str:
     return uri if uri.endswith("/") else f"{uri}/"
 
 
-def get_storage_roots(activation_uri: str, refresh: bool = False) -> List[str]:
+def get_storage_roots(activation_uri: str, refresh: bool = False, probe: bool = False) -> List[str]:
     """
     List storage-root labels available on the connected phone.
 
@@ -69,6 +69,9 @@ def get_storage_roots(activation_uri: str, refresh: bool = False) -> List[str]:
     uri = _uri_with_trailing_slash(activation_uri)
     if not refresh and uri in _ROOTS_CACHE:
         return list(_ROOTS_CACHE[uri])
+
+    if not probe:
+        return list(STORAGE_LABELS)
 
     try:
         gio_utils.gio_mount(uri)
@@ -82,6 +85,11 @@ def get_storage_roots(activation_uri: str, refresh: bool = False) -> List[str]:
     deduped = tuple(dict.fromkeys(roots))
     _ROOTS_CACHE[uri] = deduped
     return list(deduped)
+
+
+def prime_storage_roots(activation_uri: str, refresh: bool = False) -> List[str]:
+    """Populate the storage-label cache by querying the device once."""
+    return get_storage_roots(activation_uri, refresh=refresh, probe=True)
 
 
 def _pick_internal_storage_label(roots: List[str]) -> str:

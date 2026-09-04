@@ -269,7 +269,9 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False,
     if activation_uri:
         print(f"{Colors.DIM}{Icons.SEARCH} Verifying access...{Colors.RESET}")
         try:
-            entries = gio_utils.gio_list(paths.build_phone_uri(activation_uri, "/"))
+            paths.prime_storage_roots(activation_uri)
+            entries = gio_utils.gio_list(activation_uri if activation_uri.endswith("/")
+                                         else f"{activation_uri}/")
             if not entries:  # An empty storage root usually means a locked phone.
                 print(f"{Colors.WARNING}{Icons.WARN} Device appears locked{Colors.RESET}")
                 print(f"  {Colors.DIM}{Icons.BULLET} Unlock phone and enable "

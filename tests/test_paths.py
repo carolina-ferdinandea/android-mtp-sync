@@ -15,7 +15,7 @@ def test_get_storage_roots_falls_back_when_query_fails(monkeypatch):
                         lambda uri: (_ for _ in ()).throw(paths.gio_utils.GioError("boom")))
     paths._ROOTS_CACHE.clear()
 
-    assert paths.get_storage_roots("mtp://phone/") == ["Internal storage", "SD Card"]
+    assert paths.prime_storage_roots("mtp://phone/") == ["Internal storage", "SD Card"]
 
 
 def test_get_storage_roots_uses_gio_results(monkeypatch):
@@ -24,7 +24,7 @@ def test_get_storage_roots_uses_gio_results(monkeypatch):
                         lambda uri: ["Interner gemeinsamer Speicher", "1234-5678"])
     paths._ROOTS_CACHE.clear()
 
-    assert paths.get_storage_roots("mtp://phone/") == [
+    assert paths.prime_storage_roots("mtp://phone/") == [
         "Interner gemeinsamer Speicher",
         "1234-5678",
     ]
@@ -132,6 +132,7 @@ def test_build_phone_uri_maps_internal_label_to_localized_storage(monkeypatch):
     monkeypatch.setattr(paths.gio_utils, "gio_list",
                         lambda uri: ["Interner gemeinsamer Speicher", "1234-5678"])
     paths._ROOTS_CACHE.clear()
+    paths.prime_storage_roots("mtp://sony/")
 
     assert paths.build_phone_uri("mtp://sony/", "/DCIM/Camera") == (
         "mtp://sony/Interner%20gemeinsamer%20Speicher/DCIM/Camera"
@@ -143,6 +144,7 @@ def test_build_phone_uri_accepts_explicit_localized_storage_labels(monkeypatch):
     monkeypatch.setattr(paths.gio_utils, "gio_list",
                         lambda uri: ["Interner gemeinsamer Speicher"])
     paths._ROOTS_CACHE.clear()
+    paths.prime_storage_roots("mtp://sony/")
 
     assert paths.build_phone_uri("mtp://sony/", "/Interner gemeinsamer Speicher/DCIM") == (
         "mtp://sony/Interner%20gemeinsamer%20Speicher/DCIM"

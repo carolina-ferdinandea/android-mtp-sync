@@ -65,7 +65,7 @@ def browse_phone_interactive(device_info: Dict[str, Any], start_path: str = "/")
     print(f"{Colors.SEPARATOR}{'=' * 60}{Colors.RESET}")
 
     # First, show storage roots
-    storages = paths.get_storage_roots(activation_uri)
+    storages = paths.prime_storage_roots(activation_uri)
     print(f"\n{Colors.BOLD}Available Storage:{Colors.RESET}")
     for i, storage in enumerate(storages, 1):
         marker = Colors.SUCCESS if i == 1 else Colors.WARNING
@@ -191,6 +191,7 @@ def list_phone_root(device_info: Dict[str, Any]) -> None:
     display_name = device_info.get("display_name", "Phone")
 
     print(f"\n{display_name} - Root Directories:\n")
+    paths.prime_storage_roots(activation_uri)
 
     print(f"{Icons.PHONE} Storage roots:")
     try:
