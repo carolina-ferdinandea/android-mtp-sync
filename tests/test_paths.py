@@ -7,6 +7,29 @@ import pytest
 from phone_migration import paths
 
 
+# --- storage root discovery ---------------------------------------------------
+
+def test_get_storage_roots_falls_back_when_query_fails(monkeypatch):
+    monkeypatch.setattr(paths.gio_utils, "gio_mount", lambda uri: None)
+    monkeypatch.setattr(paths.gio_utils, "gio_list",
+                        lambda uri: (_ for _ in ()).throw(paths.gio_utils.GioError("boom")))
+    paths._ROOTS_CACHE.clear()
+
+    assert paths.prime_storage_roots("mtp://phone/") == ["Internal storage", "SD Card"]
+
+
+def test_get_storage_roots_uses_gio_results(monkeypatch):
+    monkeypatch.setattr(paths.gio_utils, "gio_mount", lambda uri: None)
+    monkeypatch.setattr(paths.gio_utils, "gio_list",
+                        lambda uri: ["Interner gemeinsamer Speicher", "1234-5678"])
+    paths._ROOTS_CACHE.clear()
+
+    assert paths.prime_storage_roots("mtp://phone/") == [
+        "Interner gemeinsamer Speicher",
+        "1234-5678",
+    ]
+
+
 # --- expand_desktop ---------------------------------------------------------
 
 @pytest.mark.parametrize("empty", ["", "   ", "\t\n"])
@@ -102,6 +125,30 @@ def test_build_phone_uri_adds_the_trailing_slash_to_the_activation_uri():
 
 def test_build_phone_uri_cannot_escape_the_storage_prefix():
     assert paths.build_phone_uri("mtp://x/", "/../../etc") == "mtp://x/Internal%20storage/etc"
+
+
+def test_build_phone_uri_maps_internal_label_to_localized_storage(monkeypatch):
+    monkeypatch.setattr(paths.gio_utils, "gio_mount", lambda uri: None)
+    monkeypatch.setattr(paths.gio_utils, "gio_list",
+                        lambda uri: ["Interner gemeinsamer Speicher", "1234-5678"])
+    paths._ROOTS_CACHE.clear()
+    paths.prime_storage_roots("mtp://sony/")
+
+    assert paths.build_phone_uri("mtp://sony/", "/DCIM/Camera") == (
+        "mtp://sony/Interner%20gemeinsamer%20Speicher/DCIM/Camera"
+    )
+
+
+def test_build_phone_uri_accepts_explicit_localized_storage_labels(monkeypatch):
+    monkeypatch.setattr(paths.gio_utils, "gio_mount", lambda uri: None)
+    monkeypatch.setattr(paths.gio_utils, "gio_list",
+                        lambda uri: ["Interner gemeinsamer Speicher"])
+    paths._ROOTS_CACHE.clear()
+    paths.prime_storage_roots("mtp://sony/")
+
+    assert paths.build_phone_uri("mtp://sony/", "/Interner gemeinsamer Speicher/DCIM") == (
+        "mtp://sony/Interner%20gemeinsamer%20Speicher/DCIM"
+    )
 
 
 # --- next_available_name ----------------------------------------------------

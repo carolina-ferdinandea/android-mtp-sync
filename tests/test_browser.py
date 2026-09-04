@@ -76,6 +76,12 @@ def test_root_paths_do_not_double_their_slash(gio):
     assert entries[0]["path"] == "/Camera"
 
 
+def test_root_listing_uses_the_activation_uri(gio):
+    browser.list_phone_directory("mtp://phone/", "/")
+
+    assert gio["list"] == ["mtp://phone/"]
+
+
 def test_storage_prefixed_paths_do_not_double_their_slash(gio):
     entries = browser.list_phone_directory("mtp://phone/", "SD Card/")
 

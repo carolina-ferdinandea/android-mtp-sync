@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 from flask import Flask, render_template, jsonify, request
 
-from . import config as cfg, device, runner, browser, rule_validator, state
+from . import config as cfg, device, runner, browser, rule_validator, state, paths
 from .theme import Colors, Icons
 
 
@@ -150,6 +150,62 @@ def _resolve_desktop_path(raw_path: str):
                                                     # NUL, unresolvable ~user
     except PermissionError as e:
         return None, (jsonify({"error": str(e)}), 403)
+
+
+def _phone_alias_map(activation_uri: str) -> dict:
+    return paths.get_storage_alias_map(activation_uri or "")
+
+
+def _resolve_phone_browser_path(raw_path: str, activation_uri: str) -> str:
+    """
+    Expand web aliases ("internal/", "sd/") to the device's storage labels.
+    """
+    phone_path = _text(raw_path) or "/"
+    alias_map = _phone_alias_map(activation_uri)
+
+    if phone_path in ("internal", "internal/"):
+        return f"/{alias_map.get(paths.DEFAULT_STORAGE_LABEL, paths.DEFAULT_STORAGE_LABEL)}"
+    if phone_path.startswith("internal/"):
+        suffix = phone_path[len("internal/"):]
+        return f"/{alias_map.get(paths.DEFAULT_STORAGE_LABEL, paths.DEFAULT_STORAGE_LABEL)}/{suffix}"
+
+    if phone_path in ("sd", "sd/"):
+        return f"/{alias_map.get(paths.SD_STORAGE_LABEL, paths.SD_STORAGE_LABEL)}"
+    if phone_path.startswith("sd/"):
+        suffix = phone_path[len("sd/"):]
+        return f"/{alias_map.get(paths.SD_STORAGE_LABEL, paths.SD_STORAGE_LABEL)}/{suffix}"
+
+    return phone_path
+
+
+def _bookmark_alias_for_phone_path(phone_path: str, activation_uri: str) -> str:
+    """Store bookmarks with stable aliases where possible."""
+    path = _text(phone_path)
+    if not path:
+        return path
+
+    if path.startswith('/storage/emulated/0/'):
+        return 'internal/' + path[len('/storage/emulated/0/'):]
+    if path.startswith('/storage/'):
+        parts = path.split('/', 3)
+        if len(parts) >= 3:
+            return 'sd/' + (parts[3] if len(parts) > 3 else '')
+
+    alias_map = _phone_alias_map(activation_uri)
+    internal = alias_map.get(paths.DEFAULT_STORAGE_LABEL, paths.DEFAULT_STORAGE_LABEL)
+    sd = alias_map.get(paths.SD_STORAGE_LABEL, paths.SD_STORAGE_LABEL)
+
+    if path == f"/{internal}":
+        return "internal"
+    if path.startswith(f"/{internal}/"):
+        return "internal/" + path[len(f"/{internal}/"):]
+
+    if path == f"/{sd}":
+        return "sd"
+    if path.startswith(f"/{sd}/"):
+        return "sd/" + path[len(f"/{sd}/"):]
+
+    return path
 
 
 class StreamingOutput(io.TextIOBase):
@@ -636,19 +692,8 @@ def api_browse_phone():
     if not activation_uri:
         return jsonify({"error": "Device activation URI not found"}), 500
 
-    # Resolve relative phone paths (sd/, internal/)
-    if phone_path.startswith('internal/'):
-        phone_path = '/storage/emulated/0/' + phone_path[len('internal/'):]
-    elif phone_path.startswith('sd/'):
-        # Find the first external SD card path
-        try:
-            for entry in browser.list_phone_directory(activation_uri, '/storage'):
-                # SD cards typically have names like 'XXXX-XXXX'
-                if entry['is_directory'] and '-' in entry['name'] and entry['name'] != 'emulated':
-                    phone_path = '/storage/' + entry['name'] + '/' + phone_path[len('sd/'):]
-                    break
-        except Exception:
-            pass                                # fall through with the path as-is
+    paths.prime_storage_roots(activation_uri)
+    phone_path = _resolve_phone_browser_path(phone_path, activation_uri)
 
     try:
         entries = [
@@ -769,13 +814,12 @@ def api_add_bookmark(bookmark_type):
             return error
         path = str(resolved)
     else:
-        # Convert absolute phone paths to relative storage paths
-        if path.startswith('/storage/emulated/0/'):
-            path = 'internal/' + path[len('/storage/emulated/0/'):]
-        elif path.startswith('/storage/'):
-            parts = path.split('/', 3)
-            if len(parts) >= 3:
-                path = 'sd/' + (parts[3] if len(parts) > 3 else '')
+        profile = runner.detect_connected_device(cfg.load_config(), verbose=False)
+        activation_uri = ""
+        if profile:
+            activation_uri = profile.get("device", {}).get("activation_uri", "")
+            paths.prime_storage_roots(activation_uri)
+        path = _bookmark_alias_for_phone_path(path, activation_uri)
 
     if any(b["path"] == path for b in bookmarks[bookmark_type]):
         return jsonify({"error": "Bookmark already exists"}), 409
