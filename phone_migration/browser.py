@@ -5,6 +5,10 @@ from . import gio_utils, paths
 from .theme import Colors, Icons
 
 
+def _is_root_path(phone_path: str) -> bool:
+    return (phone_path or "").strip() in ("", "/")
+
+
 def list_phone_directory(activation_uri: str, phone_path: str = "/") -> List[Dict[str, Any]]:
     """
     List contents of a phone directory.
@@ -24,7 +28,10 @@ def list_phone_directory(activation_uri: str, phone_path: str = "/") -> List[Dic
     """
     gio_utils.gio_mount(activation_uri)
 
-    full_uri = paths.build_phone_uri(activation_uri, phone_path)
+    if _is_root_path(phone_path):
+        full_uri = activation_uri if activation_uri.endswith("/") else f"{activation_uri}/"
+    else:
+        full_uri = paths.build_phone_uri(activation_uri, phone_path)
     parent = phone_path.rstrip("/")
 
     entries = [
@@ -58,9 +65,11 @@ def browse_phone_interactive(device_info: Dict[str, Any], start_path: str = "/")
     print(f"{Colors.SEPARATOR}{'=' * 60}{Colors.RESET}")
 
     # First, show storage roots
+    storages = paths.get_storage_roots(activation_uri)
     print(f"\n{Colors.BOLD}Available Storage:{Colors.RESET}")
-    print(f"  {Colors.SUCCESS}[1]{Colors.RESET} Internal storage")
-    print(f"  {Colors.WARNING}[2]{Colors.RESET} SD Card (if available)")
+    for i, storage in enumerate(storages, 1):
+        marker = Colors.SUCCESS if i == 1 else Colors.WARNING
+        print(f"  {marker}[{i}]{Colors.RESET} {storage}")
     print(f"  {Colors.ERROR}[0]{Colors.RESET} Cancel")
 
     try:
@@ -68,34 +77,33 @@ def browse_phone_interactive(device_info: Dict[str, Any], start_path: str = "/")
 
         if choice == "0":
             return
-        elif choice == "1":
-            storage = "Internal storage"
-        elif choice == "2":
-            storage = "SD Card"
-        else:
+        if not choice.isdigit():
             print("Invalid choice")
             return
+        idx = int(choice) - 1
+        if not (0 <= idx < len(storages)):
+            print("Invalid choice")
+            return
+        storage = storages[idx]
 
         # Browse from storage root
-        browse_path_recursive(activation_uri, storage, "/")
+        browse_path_recursive(activation_uri, f"/{storage}", f"/{storage}")
 
     except (KeyboardInterrupt, EOFError):
         print("\n\nBrowsing cancelled")
 
 
-def browse_path_recursive(activation_uri: str, storage: str, current_path: str) -> None:
+def browse_path_recursive(activation_uri: str, current_path: str, root_path: str) -> None:
     """
     Recursively browse a path on phone.
 
     Args:
         activation_uri: MTP URI
-        storage: Storage label (Internal storage or SD Card)
         current_path: Current path being browsed
+        root_path: Selected storage root; "go up" cannot pass this path
     """
     while True:
-        full_path = current_path if current_path.startswith(f"{storage}/") else f"{storage}{current_path}"
-
-        print(f"\n{Colors.BOLD}{Colors.PATH}{Icons.FOLDER} {full_path}{Colors.RESET}")
+        print(f"\n{Colors.BOLD}{Colors.PATH}{Icons.FOLDER} {current_path}{Colors.RESET}")
         print(f"{Colors.SEPARATOR}{'-' * 60}{Colors.RESET}")
 
         try:
@@ -144,7 +152,7 @@ def browse_path_recursive(activation_uri: str, storage: str, current_path: str) 
                 return
             elif choice == 'u':
                 # Go up one level
-                if current_path == "/":
+                if current_path.rstrip("/") == root_path.rstrip("/"):
                     print("Already at root")
                 else:
                     parts = current_path.rstrip("/").split("/")
@@ -184,8 +192,7 @@ def list_phone_root(device_info: Dict[str, Any]) -> None:
 
     print(f"\n{display_name} - Root Directories:\n")
 
-    # Check Internal storage
-    print(f"{Icons.PHONE} Internal storage:")
+    print(f"{Icons.PHONE} Storage roots:")
     try:
         entries = list_phone_directory(activation_uri, "/")
         for entry in entries:
@@ -193,19 +200,6 @@ def list_phone_root(device_info: Dict[str, Any]) -> None:
                 print(f"  /{entry['name']}/")
     except gio_utils.GioError as e:
         print(f"  Error: {e}")
-
-    # Check SD Card if available
-    print(f"\n{Icons.FOLDER} SD Card:")
-    try:
-        entries = list_phone_directory(activation_uri, "SD Card/")
-        if entries:
-            for entry in entries:
-                if entry["is_directory"]:
-                    print(f"  SD Card/{entry['name']}/")
-        else:
-            print("  (not available or empty)")
-    except gio_utils.GioError:
-        print("  (not available)")
 
     print("\nCommon paths:")
     print("  /DCIM/Camera          - Photos")

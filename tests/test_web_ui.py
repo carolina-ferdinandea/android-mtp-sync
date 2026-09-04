@@ -337,6 +337,48 @@ def test_phone_bookmarks_are_normalised_and_deletable(client):
     assert web_ui.bookmarks["phone"] == []
 
 
+def test_phone_bookmark_uses_internal_alias_for_localized_storage(client, monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "detect_connected_device",
+        lambda *args, **kwargs: {"device": {"activation_uri": "mtp://sony/"}},
+    )
+    monkeypatch.setattr(
+        web_ui,
+        "_phone_alias_map",
+        lambda _uri: {"Internal storage": "Interner gemeinsamer Speicher", "SD Card": "1234-5678"},
+    )
+
+    resp = client.post("/api/bookmarks/phone", headers=SAME_ORIGIN,
+                       json={"name": "cam", "path": "/Interner gemeinsamer Speicher/DCIM"})
+    assert resp.status_code == 200
+    assert web_ui.bookmarks["phone"][0]["path"] == "internal/DCIM"
+
+
+def test_browse_phone_resolves_internal_alias_to_localized_storage(client, monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "detect_connected_device",
+        lambda *args, **kwargs: {"device": {"activation_uri": "mtp://sony/"}},
+    )
+    monkeypatch.setattr(
+        web_ui,
+        "_phone_alias_map",
+        lambda _uri: {"Internal storage": "Interner gemeinsamer Speicher"},
+    )
+    seen = {}
+
+    def fake_list(_uri, phone_path="/"):
+        seen["path"] = phone_path
+        return []
+
+    monkeypatch.setattr(web_ui.browser, "list_phone_directory", fake_list)
+    resp = client.get("/api/browse/phone?path=internal/DCIM")
+
+    assert resp.status_code == 200
+    assert seen["path"] == "/Interner gemeinsamer Speicher/DCIM"
+
+
 def test_desktop_bookmark_rejects_a_non_string_path(client, home):
     resp = client.post("/api/bookmarks/desktop", headers=SAME_ORIGIN,
                        json={"name": "pics", "path": {"a": 1}})

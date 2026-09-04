@@ -2,15 +2,20 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
+
+from . import gio_utils
 
 
 DEFAULT_STORAGE_LABEL = "Internal storage"
+SD_STORAGE_LABEL = "SD Card"
 
 # Storage labels a phone path may name explicitly, and the "~/is", "~/sd" shortcuts.
-STORAGE_LABELS = ("Internal storage", "SD Card")
-STORAGE_SHORTCUTS = {"is": "Internal storage", "sd": "SD Card"}
+STORAGE_LABELS = (DEFAULT_STORAGE_LABEL, SD_STORAGE_LABEL)
+STORAGE_SHORTCUTS = {"is": DEFAULT_STORAGE_LABEL, "sd": SD_STORAGE_LABEL}
+
+_ROOTS_CACHE: Dict[str, Tuple[str, ...]] = {}
 
 # Highest " (n)" suffix tried before a copy is given up on.
 # ponytail: 1000 is plenty for a camera roll; raise it if a real collection hits it.
@@ -48,7 +53,82 @@ def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def normalize_phone_path(phone_path: str) -> Tuple[str, List[str]]:
+def _uri_with_trailing_slash(uri: str) -> str:
+    return uri if uri.endswith("/") else f"{uri}/"
+
+
+def get_storage_roots(activation_uri: str, refresh: bool = False) -> List[str]:
+    """
+    List storage-root labels available on the connected phone.
+
+    Falls back to the built-in labels when the phone cannot be queried.
+    """
+    if not activation_uri.startswith("mtp://"):
+        return list(STORAGE_LABELS)
+
+    uri = _uri_with_trailing_slash(activation_uri)
+    if not refresh and uri in _ROOTS_CACHE:
+        return list(_ROOTS_CACHE[uri])
+
+    try:
+        gio_utils.gio_mount(uri)
+        roots = [name.rstrip("/") for name in gio_utils.gio_list(uri) if name.strip()]
+    except gio_utils.GioError:
+        roots = []
+
+    if not roots:
+        roots = list(STORAGE_LABELS)
+
+    deduped = tuple(dict.fromkeys(roots))
+    _ROOTS_CACHE[uri] = deduped
+    return list(deduped)
+
+
+def _pick_internal_storage_label(roots: List[str]) -> str:
+    if DEFAULT_STORAGE_LABEL in roots:
+        return DEFAULT_STORAGE_LABEL
+
+    candidates = []
+    for root in roots:
+        lower = root.casefold()
+        looks_sd = "sd" in lower or "card" in lower or "-" in root
+        if not looks_sd:
+            candidates.append(root)
+
+    if candidates:
+        return candidates[0]
+    return roots[0] if roots else DEFAULT_STORAGE_LABEL
+
+
+def _pick_sd_storage_label(roots: List[str], internal_label: str) -> Optional[str]:
+    if SD_STORAGE_LABEL in roots:
+        return SD_STORAGE_LABEL
+
+    others = [r for r in roots if r != internal_label]
+    for root in others:
+        lower = root.casefold()
+        if "sd" in lower or "card" in lower or "-" in root:
+            return root
+    return others[0] if others else None
+
+
+def get_storage_alias_map(activation_uri: str) -> Dict[str, str]:
+    """
+    Map logical labels used in rules to localized device labels.
+    """
+    roots = get_storage_roots(activation_uri)
+    internal = _pick_internal_storage_label(roots)
+    mapping = {DEFAULT_STORAGE_LABEL: internal}
+
+    sd = _pick_sd_storage_label(roots, internal)
+    if sd:
+        mapping[SD_STORAGE_LABEL] = sd
+
+    return mapping
+
+
+def normalize_phone_path(phone_path: str,
+                         storage_labels: Optional[Iterable[str]] = None) -> Tuple[str, List[str]]:
     """
     Normalize phone path and extract storage label and segments.
 
@@ -69,10 +149,12 @@ def normalize_phone_path(phone_path: str) -> Tuple[str, List[str]]:
     segments = [s for s in (phone_path or "").strip().replace("\\", "/").split("/")
                 if s and s not in (".", "..")]
 
+    labels = tuple(storage_labels) if storage_labels is not None else STORAGE_LABELS
+
     if len(segments) >= 2 and segments[0] == "~" and segments[1] in STORAGE_SHORTCUTS:
         return STORAGE_SHORTCUTS[segments[1]], segments[2:]
 
-    if segments and segments[0] in STORAGE_LABELS:
+    if segments and segments[0] in labels:
         return segments[0], segments[1:]
 
     return DEFAULT_STORAGE_LABEL, segments
@@ -89,10 +171,13 @@ def build_phone_uri(activation_uri: str, phone_path: str) -> str:
     Returns:
         Full MTP URI (e.g., "mtp://[usb:003,009]/Internal%20storage/DCIM/Camera")
     """
-    if not activation_uri.endswith("/"):
-        activation_uri += "/"
+    activation_uri = _uri_with_trailing_slash(activation_uri)
+    roots = get_storage_roots(activation_uri)
+    alias_map = get_storage_alias_map(activation_uri)
 
-    storage_label, segments = normalize_phone_path(phone_path)
+    known_labels = tuple(dict.fromkeys((*STORAGE_LABELS, *roots)))
+    storage_label, segments = normalize_phone_path(phone_path, storage_labels=known_labels)
+    storage_label = alias_map.get(storage_label, storage_label)
 
     # The storage label holds a space, so it needs encoding just like the rest.
     return activation_uri + "/".join(quote(s, safe='') for s in [storage_label] + segments)
